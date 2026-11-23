@@ -30,11 +30,12 @@ The unit runs with a dynamic unprivileged user; systemd provides its writable pe
 | --- | --- | --- |
 | STATE_FILE | Yes | Persistent JSON file; example uses /var/lib/systemd-monitor/state.json. Use a separate file from docker-monitor. |
 | BETTERUPTIME_WEBHOOK_URL | Yes | Better Stack incoming-webhook HTTP(S) URL. |
-| SYSTEMD_SERVICES | Yes | Comma/whitespace-separated exact service names. Bare names such as nginx become nginx.service; instance names such as worker@one.service are supported. No globs or uninstantiated templates. |
+| SYSTEMD_SERVICES | Yes | Comma/whitespace-separated service names. Bare names such as nginx become nginx.service; exact instances such as worker@one.service are supported. worker@, worker@.service, worker@* and worker@*.service all select loaded instances of worker. Other globs are rejected. |
 | POLL_INTERVAL | No | Positive Go duration; default 30s. Alert threshold remains five minutes. |
 
 ## Outage behavior
 
+- Template selectors (for example `SYSTEMD_SERVICES="worker@ nginx.service"`) refresh instances every poll using `systemctl list-units --all`, including loaded inactive/failed instances. Overlapping selectors are deduplicated. Zero matches produce no alert. Instances that systemd unloads disappear from wildcard monitoring and their saved outage state is cleared; use exact instance names when disappearance itself must alert. Never-started instances are not discovered merely because a template exists.
 - Only listed services are monitored, whether enabled or disabled. This avoids alerts for the many deliberately inactive services on a normal host.
 - Loaded services with ActiveState=active are healthy, including active/exited services. Failed, inactive, activating, deactivating, reloading, missing and masked services count as non-active. Long startups or reloads exceeding five minutes can therefore alert.
 - Non-active state changes do not reset the outage timer. An observed active state clears it and permits a fresh alert on a later outage. Removing a service from configuration clears its saved entry on the next successful poll.

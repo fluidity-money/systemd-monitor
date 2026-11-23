@@ -121,11 +121,17 @@ func configFromEnv() (config, error) {
 	seen := make(map[string]bool)
 	valid := regexp.MustCompile(`^[a-zA-Z0-9_:][a-zA-Z0-9_: .@\\-]*$`)
 	for _, unit := range units {
-		if !strings.Contains(unit, ".") {
+		if strings.HasSuffix(unit, "@") || strings.HasSuffix(unit, "@*") {
+			unit += ".service"
+		} else if !strings.Contains(unit, ".") {
 			unit += ".service"
 		}
-		if !valid.MatchString(unit) || !strings.HasSuffix(unit, ".service") || strings.HasSuffix(unit, "@.service") {
-			return config{}, fmt.Errorf("invalid SYSTEMD_SERVICES unit %q: expected an exact service name", unit)
+		if strings.HasSuffix(unit, "@.service") {
+			unit = strings.TrimSuffix(unit, "@.service") + "@*.service"
+		}
+		validationName := strings.ReplaceAll(unit, "@*.service", "@instance.service")
+		if !valid.MatchString(validationName) || !strings.HasSuffix(unit, ".service") {
+			return config{}, fmt.Errorf("invalid SYSTEMD_SERVICES unit %q: expected a service name or template@ wildcard", unit)
 		}
 		if !seen[unit] {
 			cfg.Services = append(cfg.Services, unit)
@@ -152,9 +158,51 @@ func newSystemdClient(units []string) *systemdClient {
 	}}
 }
 
+// expandUnits discovers loaded instances afresh on every poll. Exact names are
+// queried even when absent, so explicitly configured missing services still alert.
+func (s *systemdClient) expandUnits(ctx context.Context) ([]string, error) {
+	var units []string
+	seen := make(map[string]bool)
+	for _, selector := range s.units {
+		matches := []string{selector}
+		if strings.HasSuffix(selector, "@*.service") {
+			queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			output, err := s.run(queryCtx, "--system", "--no-pager", "list-units", "--all", "--type=service", "--plain", "--no-legend", "--full", "--", selector)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("discover systemd instances for %s: %w", selector, err)
+			}
+			matches = nil
+			prefix := strings.TrimSuffix(selector, "*.service")
+			for _, line := range strings.Split(string(output), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) == 0 {
+					continue
+				}
+				unit := fields[0]
+				if len(fields) < 4 || !strings.HasPrefix(unit, prefix) || !strings.HasSuffix(unit, ".service") || unit == prefix+".service" {
+					return nil, fmt.Errorf("unexpected instance row %q for %s", line, selector)
+				}
+				matches = append(matches, unit)
+			}
+		}
+		for _, unit := range matches {
+			if !seen[unit] {
+				units = append(units, unit)
+				seen[unit] = true
+			}
+		}
+	}
+	return units, nil
+}
+
 func (s *systemdClient) listServices(ctx context.Context) ([]Service, error) {
-	services := make([]Service, 0, len(s.units))
-	for _, unit := range s.units {
+	units, err := s.expandUnits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	services := make([]Service, 0, len(units))
+	for _, unit := range units {
 		queryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		output, err := s.run(queryCtx, "--system", "--no-pager", "show", "--property=LoadState,ActiveState,SubState", "--", unit)
 		cancel()

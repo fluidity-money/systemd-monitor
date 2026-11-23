@@ -160,7 +160,7 @@ func TestConfig(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(cfg.Services, []string{"nginx.service", "worker@one.service"}) || cfg.PollInterval != 30*time.Second {
 		t.Fatalf("config = %#v, err = %v", cfg, err)
 	}
-	for _, unit := range []string{"", "*.service", "-bad.service", "worker@.service", "foo.timer", "/tmp/a.service"} {
+	for _, unit := range []string{"", "*.service", "-bad.service", "worker@?.service", "foo.timer", "/tmp/a.service"} {
 		t.Setenv("SYSTEMD_SERVICES", unit)
 		if _, err := configFromEnv(); err == nil {
 			t.Fatalf("accepted unit %q", unit)
