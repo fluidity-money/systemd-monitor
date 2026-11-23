@@ -154,7 +154,19 @@ func configFromEnv() (config, error) {
 
 func newSystemdClient(units []string) *systemdClient {
 	return &systemdClient{units: units, run: func(ctx context.Context, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, "systemctl", args...).Output()
+		output, err := exec.CommandContext(ctx, "systemctl", args...).Output()
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+					err = fmt.Errorf("%w: %s", err, stderr)
+				}
+			}
+			if ctx.Err() != nil {
+				err = fmt.Errorf("%w: %v", ctx.Err(), err)
+			}
+		}
+		return output, err
 	}}
 }
 
