@@ -1,0 +1,69 @@
+# systemd-monitor
+
+Small systemd outage monitor, based on ../docker-monitor. Polls explicitly selected system services every 30 seconds and sends one Better Stack incoming-webhook alert per service after five minutes of observed non-active state. Persists outage timers and notification status across restarts; retries unsuccessful deliveries on the next poll. No third-party Go dependencies.
+
+## Build and install
+
+Requires Go 1.24+ to build and Linux with systemd and `systemctl` on PATH to run. Run directly on the monitored host, not inside an ordinary Docker container.
+
+```
+cd /c/f/systemd-monitor
+make test
+make cli
+sudo make install
+sudo install -m 0600 systemd-monitor.env.example /etc/systemd-monitor.env
+```
+
+Edit /etc/systemd-monitor.env with your actual webhook URL and service names before enabling. Do not overwrite an existing configuration when upgrading. Then:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable --now systemd-monitor.service
+sudo journalctl -u systemd-monitor.service -f
+```
+
+The unit runs with a dynamic unprivileged user; systemd provides its writable persistent StateDirectory. Read-only system-manager queries normally need no root privileges. Custom D-Bus policies may require access adjustments. The application inherits environment variables; it does not load dotenv files itself. Restart the monitor after changing configuration. Run only one instance per state file.
+
+## Environment
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| STATE_FILE | Yes | Persistent JSON file; example uses /var/lib/systemd-monitor/state.json. Use a separate file from docker-monitor. |
+| BETTERUPTIME_WEBHOOK_URL | Yes | Better Stack incoming-webhook HTTP(S) URL. |
+| SYSTEMD_SERVICES | Yes | Comma/whitespace-separated exact service names. Bare names such as nginx become nginx.service; instance names such as worker@one.service are supported. No globs or uninstantiated templates. |
+| POLL_INTERVAL | No | Positive Go duration; default 30s. Alert threshold remains five minutes. |
+
+## Outage behavior
+
+- Only listed services are monitored, whether enabled or disabled. This avoids alerts for the many deliberately inactive services on a normal host.
+- Loaded services with ActiveState=active are healthy, including active/exited services. Failed, inactive, activating, deactivating, reloading, missing and masked services count as non-active. Long startups or reloads exceeding five minutes can therefore alert.
+- Non-active state changes do not reset the outage timer. An observed active state clears it and permits a fresh alert on a later outage. Removing a service from configuration clears its saved entry on the next successful poll.
+- Like docker-monitor, recovery clears local state but does NOT send a recovery/resolution webhook.
+- Polling cannot detect brief failures between checks or a restart loop that appears active at every sample. This checks systemd state, not HTTP/application health. Oneshot/timer-driven services that normally become inactive should not be listed.
+- A systemctl timeout, permission error or malformed response aborts that poll, logs an error and preserves previous state. It is not treated as proof of a service outage. Each command has a 15-second timeout; webhook requests also have a 15-second timeout.
+- Whole-host failure, network loss, or failure of the monitor itself cannot reliably send an outbound alert. Use an external uptime check/heartbeat for those cases.
+- State is atomically replaced with mode 0600. A missing file starts fresh; corrupt state causes startup failure rather than silently forgetting notifications. Normal successful polls are silent.
+- Delivery and state persistence cannot be atomic together: a crash after delivery but before saving can retry the same incident. Retries use the same incident ID for receiver-side deduplication. Outage IDs include hostname, service name and first-observed timestamp; use distinct hostnames across monitored hosts.
+
+## Better Stack mapping
+
+Same incident envelope and mapping as docker-monitor:
+
+- Creation rule: incident.status contains alert
+- Title: incident.title
+- Cause: incident.description
+- Alert ID: incident.id
+- Metadata: incident.metadata (hostname, service_id, service_name, state, first_seen, duration_seconds)
+
+Example incident ID: systemd-HOST-worker.service-TIMESTAMP. Status is alert; severity is high. Title identifies both the service and host.
+
+## Verification
+
+```
+go test -race ./...
+go vet ./...
+go build -o systemd-monitor .
+systemd-analyze verify systemd-monitor.service
+```
+
+Unit verification expects /usr/local/bin/systemd-monitor to be installed. Automated tests use simulated systemctl output and local HTTP servers; they never stop host services or contact a real webhook. Before relying on production alerts, verify read access to your selected services and perform a controlled outage test on a disposable service.

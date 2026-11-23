@@ -1,0 +1,21 @@
+[Unit]
+Description=Systemd service outage webhook monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=systemd-monitor
+EnvironmentFile=/etc/systemd-monitor.env
+ExecStart=/usr/local/bin/systemd-monitor
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
