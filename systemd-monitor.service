@@ -5,7 +5,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-DynamicUser=yes
+User=systemd-monitor
+Group=systemd-monitor
 StateDirectory=systemd-monitor
 EnvironmentFile=/etc/systemd-monitor.env
 ExecStart=/usr/local/bin/systemd-monitor

@@ -1,0 +1,2 @@
+# Static unprivileged identity for system-bus queries.
+u systemd-monitor - "Systemd service outage monitor" /var/lib/systemd-monitor

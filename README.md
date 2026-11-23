@@ -11,6 +11,7 @@ cd /c/f/systemd-monitor
 make test
 make cli
 sudo make install
+sudo systemd-sysusers /usr/lib/sysusers.d/systemd-monitor.conf
 sudo install -m 0600 systemd-monitor.env.example /etc/systemd-monitor.env
 ```
 
@@ -22,7 +23,23 @@ sudo systemctl enable --now systemd-monitor.service
 sudo journalctl -u systemd-monitor.service -f
 ```
 
-The unit runs with a dynamic unprivileged user; systemd provides its writable persistent StateDirectory. Read-only system-manager queries normally need no root privileges. Custom D-Bus policies may require access adjustments. The application inherits environment variables; it does not load dotenv files itself. Restart the monitor after changing configuration. Run only one instance per state file.
+The unit runs as the dedicated static `systemd-monitor` user and group; systemd provides its writable persistent StateDirectory and manages its ownership. `systemd-sysusers` creates the account without a login shell. A static identity avoids system-bus connection failures seen with DynamicUser on some hosts. Read-only system-manager queries normally need no root privileges. Custom D-Bus policies may require access adjustments. The application inherits environment variables; it does not load dotenv files itself. Restart the monitor after changing configuration. Run only one instance per state file.
+
+`make install` installs the sysusers definition but does not create accounts or restart services. `DESTDIR` stages all files without changing host accounts; `SYSUSERS_DIR` overrides the definition directory (default `/usr/lib/sysusers.d`). Run the account-creation command on the target host before starting the service.
+
+### Upgrade from DynamicUser
+
+After updating the source on the monitored host:
+
+```
+sudo make install
+sudo systemd-sysusers /usr/lib/sysusers.d/systemd-monitor.conf
+sudo systemctl daemon-reload
+sudo systemctl restart systemd-monitor.service
+sudo journalctl -u systemd-monitor.service -n 30 --no-pager
+```
+
+Keep the existing `/etc/systemd-monitor.env` and state file; do not reinstall the example environment or delete outage history. StateDirectory remains `systemd-monitor`. The monitor stays unprivileged and retains its existing sandbox protections. Successful polls are silent; verify that new `check failed` messages stop.
 
 ## Environment
 
